@@ -3,9 +3,9 @@
 面向老年用户的诸暨公交查询应用：大字号、少层级、点两下就能看到「还有几站」。
 原生 HTML / CSS / JS 单页应用，无框架、无打包器；同一套代码通过 GitHub Pages 提供网页版，通过 Capacitor 打包成安卓 APK。
 
-- 网页版：<https://0124577.github.io/zhuji-bus-navi/>
-- 源码仓库：<https://github.com/0124577/zhuji-bus-navi>
-- 安卓安装包：见仓库 Releases 中的 `zhuji-bus-navi-v1.5.0.apk`
+- 网页版：<https://0124577.github.io/zhuji-bus-v15/>
+- 源码仓库：<https://github.com/0124577/zhuji-bus-v15>
+- 安卓安装包：见仓库 Releases 中的 `zhuji-bus-v15-v1.5.0.apk`
 
 ## 一、这一版做了什么
 
@@ -67,7 +67,7 @@ python -m http.server 8899 --directory www
 GitHub Pages：
 
 ```bash
-git subtree push --prefix www origin gh-pages
+git subtree push --prefix www v15 gh-pages
 # 仓库 Settings → Pages → Branch 选 gh-pages / root
 ```
 

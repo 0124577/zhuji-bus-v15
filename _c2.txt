@@ -1,6 +1,0 @@
-docs: 归档 v1.5.0 发布结果（Release v1.5.0 / Pages c025fb8 / 线上 41-41 / APK 哈希一致）
-
-- 自测报告更新至 v1.5.0：273 项 / 21 组、四类新分组与关键场景说明
-- 安卓构建：3,364,737 字节、SHA-256 302540fa…cab4122f、versionCode 6
-- 发布后校验：仓库 zhuji-bus-v15、Pages built（c025fb8）、线上下载件哈希逐位一致
-- README 仓库与网页地址改为 zhuji-bus-v15，补充 build-dataset.mjs 步骤

@@ -1,6 +1,6 @@
 {
   "name": "zhuji-bus-elder",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "description": "诸暨公交易用版：实时到站、换乘方案分段实时、大字竖向时间轴、本地到站提醒（静态数据 + 官方实时接口）",
   "scripts": {

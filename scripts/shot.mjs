@@ -95,7 +95,7 @@ await sleep(200);
 await page.screenshot({ path: `${OUT}/08-go-plans.png` });
 
 /* 方案详情（分段实时 + 竖向时间轴） */
-await page.evaluate(() => document.querySelector('.plan-open-btn').click());
+await page.evaluate(() => document.querySelector('.trip-card').click());
 await sleep(1700);
 await page.screenshot({ path: `${OUT}/09-plan-live.png` });
 await page.evaluate(() => { document.querySelector('#page-plan').scrollTop = 620; });
@@ -166,6 +166,23 @@ await page.evaluate(() => document.getElementById('btnReqNotify').click());
 await sleep(700);
 await page.screenshot({ path: `${OUT}/14-perm-alert.png` });
 await page.evaluate(() => { const b = document.querySelector('[data-act="permalert-close"]'); if (b) b.click(); });
+await sleep(400);
+
+/* AI 助手 */
+await page.evaluate(() => { ZJ.setTab('assistant'); });
+await sleep(500);
+await page.evaluate(() => {
+  const i = document.getElementById('aiQ');
+  i.value = '从火车站到草塔停车场少走路';
+  document.getElementById('aiForm').dispatchEvent(new Event('submit', { cancelable: true }));
+});
+await sleep(1500);
+await page.evaluate(() => { const t = document.getElementById('toast'); if (t) t.classList.remove('on'); });
+await page.screenshot({ path: `${OUT}/17-assistant.png` });
+await page.evaluate(() => document.querySelector('.ai-plan').click());
+await sleep(1600);
+await page.screenshot({ path: `${OUT}/18-detail-edit.png` });
+await page.evaluate(() => ZJ.Plan.close());
 await sleep(400);
 
 console.log('shots done →', OUT);

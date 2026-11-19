@@ -29,6 +29,7 @@
   <symbol id="i-right" viewBox="0 0 24 24"><path d="M9.2 5.2 16 12l-6.8 6.8"/></symbol>
   <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s6.6-6.1 6.6-10.4A6.6 6.6 0 0 0 5.4 10.6C5.4 14.9 12 21 12 21z"/><circle cx="12" cy="10.4" r="2.4"/></symbol>
   <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.6"/></symbol>
+  <symbol id="i-ai" viewBox="0 0 24 24"><path d="M12 3.2l1.9 5.1 5.1 1.9-5.1 1.9L12 17.2l-1.9-5.1L5 10.2l5.1-1.9z"/><path d="M18.4 15.4l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/></symbol>
 </svg>
 
 <div class="app" id="app">
@@ -119,6 +120,7 @@
       </section>
 
       <p class="foot-note">换乘与耗时均为本地静态数据估算，仅供参考，实际以运营为准</p>
+      <p class="data-hint" id="goDataHint" hidden></p>
     </div>
   </main>
 
@@ -215,6 +217,29 @@
     </div>
   </section>
 
+  <!-- ================= AI 出行助手 ================= -->
+  <main class="page" id="page-assistant">
+    <header class="ai-hdr">
+      <div class="ai-title">
+        <span class="ai-avatar"><svg class="ico"><use href="#i-ai"/></svg></span>
+        <div>
+          <h1>出行助手</h1>
+          <p>直接说「从哪到哪」，帮你查公交</p>
+        </div>
+      </div>
+    </header>
+    <div class="ai-body">
+      <div class="ai-msgs" id="aiMsgs"></div>
+      <div class="ai-chips" id="aiChips"></div>
+    </div>
+    <form class="ai-inputbar" id="aiForm" autocomplete="off">
+      <input id="aiQ" type="text" inputmode="text" placeholder="例如：我在火车站，想去草塔停车场" aria-label="输入出行需求">
+      <button class="ai-send" id="aiSend" type="submit" aria-label="发送">
+        <svg class="ico"><use href="#i-right"/></svg>
+      </button>
+    </form>
+  </main>
+
   <!-- ================= 设置 ================= -->
   <main class="page" id="page-settings">
     <header class="set-hdr">
@@ -271,8 +296,18 @@
           <div class="set-t"><b>清除缓存</b><span id="cacheTxt">查询历史与临时数据</span></div>
           <button class="mini" data-act="clear-cache">清除</button>
         </div>
+        <div class="set-row col">
+          <div class="set-line">
+            <div class="set-t"><b>站点线路数据</b><span id="dataHint">数据版本 —</span></div>
+            <span class="set-val" id="dataVer">—</span>
+          </div>
+          <div class="set-btns">
+            <button class="mini" data-act="data-check">检查更新</button>
+            <button class="mini" data-act="data-calibrate">全量校准</button>
+          </div>
+        </div>
         <div class="set-row">
-          <div class="set-t"><b>关于</b><span id="verTxt">诸暨公交 v1.4.0</span></div>
+          <div class="set-t"><b>关于</b><span id="verTxt">诸暨公交 v1.5.0</span></div>
           <button class="mini" data-act="about">查看</button>
         </div>
       </section>
@@ -289,6 +324,9 @@
     <button class="tab" data-tab="go">
       <svg class="ico"><use href="#i-route"/></svg><span>出行</span>
     </button>
+    <button class="tab" data-tab="assistant">
+      <svg class="ico"><use href="#i-ai"/></svg><span>助手</span>
+    </button>
     <button class="tab" data-tab="settings">
       <svg class="ico"><use href="#i-gear"/></svg><span>设置</span>
     </button>
@@ -301,13 +339,17 @@
 
 <script src="data/snapshot.js"></script>
 <script src="js/core.js"></script>
+<script src="js/datasync.js"></script>
 <script src="js/api.js"></script>
+<script src="js/timetable.js"></script>
+<script src="js/planner.js"></script>
 <script src="js/reminder.js"></script>
 <script src="js/picker.js"></script>
 <script src="js/line.js"></script>
 <script src="js/station.js"></script>
 <script src="js/plan.js"></script>
 <script src="js/go.js"></script>
+<script src="js/ai.js"></script>
 <script src="js/home.js"></script>
 <script src="js/settings.js"></script>
 <script src="js/app.js"></script>

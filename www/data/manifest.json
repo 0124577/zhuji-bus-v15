@@ -1,0 +1,65 @@
+{
+  "dataset": "zhuji-bus",
+  "version": 2026111901,
+  "format": 3,
+  "generated": "2026-11-18",
+  "algorithm": "fnv1a32",
+  "counts": {
+    "lines": 395,
+    "dirs": 779,
+    "stops": 22186,
+    "names": 3061
+  },
+  "chunkLines": 50,
+  "totalHash": "64ac5f4d",
+  "chunks": [
+    {
+      "id": "c00",
+      "hash": "0fe4fa1f",
+      "bytes": 161870,
+      "url": "data/ds/c00.json"
+    },
+    {
+      "id": "c01",
+      "hash": "2142b4a2",
+      "bytes": 191433,
+      "url": "data/ds/c01.json"
+    },
+    {
+      "id": "c02",
+      "hash": "527fc2a6",
+      "bytes": 163242,
+      "url": "data/ds/c02.json"
+    },
+    {
+      "id": "c03",
+      "hash": "baf3c58e",
+      "bytes": 94050,
+      "url": "data/ds/c03.json"
+    },
+    {
+      "id": "c04",
+      "hash": "5b574e03",
+      "bytes": 81164,
+      "url": "data/ds/c04.json"
+    },
+    {
+      "id": "c05",
+      "hash": "c599367d",
+      "bytes": 64721,
+      "url": "data/ds/c05.json"
+    },
+    {
+      "id": "c06",
+      "hash": "d135e54c",
+      "bytes": 71520,
+      "url": "data/ds/c06.json"
+    },
+    {
+      "id": "c07",
+      "hash": "90920764",
+      "bytes": 73844,
+      "url": "data/ds/c07.json"
+    }
+  ]
+}

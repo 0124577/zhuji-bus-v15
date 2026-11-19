@@ -50,8 +50,10 @@
       const b = r.best;
       /* 首末班校验：收班 / 首班前不显示剩余站数与到站时间 */
       const svc = ZJ.Service.info(d, r.order);
+      const ttOff = !svc.off && (ZJ.Api.liveOff || !!S.err);
       let eta = '<span class="eta none">—</span>';
       if (svc.off) eta = '<span class="eta off">' + (svc.state === 'closed' ? '已收班' : '首班未发') + '</span>';
+      else if (ttOff) eta = '<span class="eta dim">时刻表</span>';
       else if (b) eta = '<span class="eta">' + (b.atStation ? '已到站' : '约 ' + b.minutes + ' 分') + '</span>';
       const buses = r.arr.slice(0, 3).map((x) =>
         '<div class="st-bus"><span class="live"></span><span class="plate">' + ZJ.esc(x.v.plate || '车辆') + '</span>' +
@@ -64,6 +66,8 @@
         (svc.off
           ? '<div class="st-buses"><div class="st-bus"><span class="where">' + ZJ.esc(ZJ.Service.note(svc)) +
             ' · ' + ZJ.esc(ZJ.Service.resume(svc)) + '</span><span class="mins none">不在运营时段</span></div></div>'
+          : ttOff ? '<div class="st-buses"><div class="st-bus"><span class="where">实时车辆不可用，已关闭到站预估</span><span class="mins none">时刻表 ' +
+              ZJ.esc(ZJ.Timetable.text(d, r.order)) + '</span></div></div>'
           : buses ? '<div class="st-buses">' + buses + '</div>'
             : '<div class="st-buses"><div class="st-bus"><span class="where">当前没有开往本站的车辆</span><span class="mins none">' +
               (r.err ? ZJ.esc(r.err) : '稍后刷新') + '</span></div></div>') +
@@ -118,6 +122,7 @@
       return am - bm || a.line.localeCompare(b.line, 'zh');
     });
     S.err = fails === results.length && results.length ? '网络异常，未能获取实时车辆' : '';
+    if (S.err || ZJ.Api.liveOff) st.entries.forEach((e) => { if (ZJ.Api.mode !== 'static') ZJ.Timetable.load(e.dir); });
     S.loading = false;
     S.at = Date.now();
     renderAll();

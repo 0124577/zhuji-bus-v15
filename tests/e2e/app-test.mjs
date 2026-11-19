@@ -75,9 +75,9 @@ await sleep(1600);
 /* ---------------- 1. 基础加载 ---------------- */
 section('基础加载与静态数据');
 ok('页面标题正确', (await page.title()).indexOf('诸暨公交') > -1, await page.title());
-ok('底部有 3 个 Tab', (await cnt('.tab')) === 3, 'count=' + (await cnt('.tab')));
+ok('底部有 4 个 Tab', (await cnt('.tab')) === 4, 'count=' + (await cnt('.tab')));
 const tabTexts = await page.$$eval('.tab', (els) => els.map((e) => e.textContent.trim()));
-ok('Tab 为「首页 / 出行 / 设置」', tabTexts.join('/') === '首页/出行/设置', tabTexts.join('/'));
+ok('Tab 为「首页 / 出行 / 助手 / 设置」', tabTexts.join('/') === '首页/出行/助手/设置', tabTexts.join('/'));
 const meta = await page.evaluate(() => ({
   lines: ZJ.Data.lines.length,
   stations: ZJ.Data.stations.length,
@@ -91,6 +91,7 @@ ok('线路方向 > 700 个', meta.dirs > 700, String(meta.dirs));
 ok('首页默认展示', await page.$eval('#page-home', (el) => el.classList.contains('on')));
 ok('线路列表已渲染', (await cnt('.line-row')) > 10, String(await cnt('.line-row')));
 ok('无公告 Tab', !tabTexts.some((t) => t.indexOf('公告') > -1));
+ok('助手 Tab 为 AI 入口', tabTexts.indexOf('助手') > -1, tabTexts.join('/'));
 ok('无我的 Tab', !tabTexts.some((t) => t.indexOf('我的') > -1));
 
 /* ---------------- 2. 首页栏目精简 + 定位 ---------------- */
@@ -360,51 +361,31 @@ await pickStation('pick-from', '火车站');
 ok('起点已选择', (await txt('#fromName')) === '火车站', await txt('#fromName'));
 await pickStation('pick-to', '草塔停车场');
 await sleep(1200);
-const planCount = await cnt('.plan-card');
+const planCount = await cnt('.trip-card');
 ok('生成多套出行方案卡片', planCount >= 2, 'cards=' + planCount);
-const planTabs = await cnt('.plan-tab');
-ok('方案切换标签 >= 2', planTabs >= 2, String(planTabs));
 const planTxt = await txt('#planResult');
-ok('方案含预计耗时', /\d+分钟|\d+ 分钟/.test(planTxt), planTxt.slice(0, 80));
-ok('方案含乘车段', planTxt.indexOf('乘') > -1, planTxt.slice(0, 100));
+ok('列表卡显示总时长', /方案\s*1[\s\S]{0,30}\d+\s*分钟/.test(planTxt), planTxt.slice(0, 80));
+ok('列表卡显示步行距离', /步行\s*[\d.]+\s*(米|公里)|无需步行换乘/.test(planTxt), planTxt.slice(0, 120));
+ok('列表卡显示公交线路', /\d+路/.test(planTxt), planTxt.slice(0, 120));
+ok('列表卡显示车辆实时状态', /(还有\s*\d+\s*站|车已到站|暂无在线车辆|已收班|实时不可用)/.test(planTxt), planTxt.slice(0, 160));
 ok('页脚含免责说明', (await txt('#page-go .foot-note')).indexOf('仅供参考') > -1, (await txt('#page-go .foot-note')).slice(0, 40));
-ok('方案卡突出「到目的地还有 N 站」', /到目的地还有\s*\d+\s*站/.test(planTxt), planTxt.slice(0, 40));
-ok('方案标签显示线路与耗时', /\d+路.*\d+ 分钟/.test(await txt('.plan-tab')), await txt('.plan-tab'));
-ok('每套方案展示四项核心指标', (await cnt('.plan-card.sel .pm')) === 4, String(await cnt('.plan-card.sel .pm')));
-ok('核心指标含耗时/站数/换乘/里程', ['耗时', '站数', '换乘', '里程'].every((k) => planTxt.indexOf(k) > -1));
-ok('方案卡列出乘车线路', (await txt('.plan-card .plan-chain')).indexOf('→') > -1, (await txt('.plan-card .plan-chain')).slice(0, 40));
-ok('方案卡片可点击进详情', await has('.plan-cardlink[data-act="plan-pick"]') && await has('.plan-open-btn[data-act="plan-open"]'));
-ok('方案卡片带详情提示', (await txt('.plan-card.sel .plan-open-btn')).indexOf('实时') > -1, await txt('.plan-card.sel .plan-open-btn'));
-ok('首套方案标为推荐', (await txt('.plan-card .plan-tag.rec')).indexOf('推荐') > -1, await txt('.plan-card .plan-tag.rec'));
-ok('复用站点时间轴展示沿途站点', (await cnt('#planResult .tl-item')) > 5, String(await cnt('#planResult .tl-item')));
+ok('列表页不再展开分段明细', (await cnt('#planResult .plan-body')) === 0 && (await cnt('#planResult .tl-item')) === 0);
+ok('列表页不再跳独立线路页', !(await has('#planResult .pl-open-line')) && !(await has('#planResult [data-act="pl-full-line"]')));
+ok('首套方案标为推荐', (await txt('.plan-tag.rec')).indexOf('推荐') > -1, await txt('.plan-tag.rec'));
 ok('历史记录已保存', await page.evaluate(() => (ZJ.Store.get('zjbus.history.v1', []) || []).length === 1));
 ok('历史列表已渲染', (await cnt('.hist-row')) === 1, String(await cnt('.hist-row')));
 
-if (planTabs > 1) {
-  await page.evaluate(() => document.querySelectorAll('.plan-tab')[1].click());
-  await sleep(400);
-  ok('可切换方案标签', await page.$eval('.plan-tab:nth-child(2)', (el) => el.classList.contains('on')));
-  const picked = await page.evaluate(() => {
-    document.querySelectorAll('#planResult .plan-card')[1].click();
-    return {
-      sel: document.querySelectorAll('#planResult .plan-card.sel').length,
-      no: document.querySelector('#planResult .plan-card.sel .plan-no').innerText.trim(),
-    };
-  });
-  await sleep(300);
-  ok('可直接点卡片切换查看', picked.sel === 1, JSON.stringify(picked));
-  ok('点卡片后选中第二套方案', picked.no.indexOf('2') > -1, picked.no);
-  await page.evaluate(() => document.querySelectorAll('.plan-tab')[0].click());
-  await sleep(300);
-}
+/* 点方案卡 → 换乘详情页（列表页不再有展开或独立线路入口） */
+await page.evaluate(() => document.querySelector('.trip-card').click());
+await page.waitForFunction(() => document.getElementById('page-plan').classList.contains('on'), { timeout: 4000 });
+await sleep(1400);
+ok('点方案卡进入换乘详情页', await page.$eval('#page-plan', (el) => el.classList.contains('on')));
 
 /* ---------------- 12. 方案详情页 ---------------- */
 section('方案详情页（分段实时公交 + 站点提醒）');
-await page.evaluate(() => document.querySelector('#planResult .plan-open-btn').click());
-await page.waitForFunction(() => document.getElementById('page-plan').classList.contains('on'), { timeout: 4000 });
-await sleep(1500);
+await sleep(600);
 ok('点击方案卡片进入详情页', await page.$eval('#page-plan', (el) => el.classList.contains('on')));
-ok('详情页标题为出行方案', (await txt('#plTitle')) === '出行方案', await txt('#plTitle'));
+ok('详情页标题区分直达与换乘', ['直达方案', '换乘方案'].indexOf(await txt('#plTitle')) > -1, await txt('#plTitle'));
 ok('副标题含起终点', (await txt('#plSub')).indexOf('火车站') > -1 && (await txt('#plSub')).indexOf('草塔停车场') > -1, await txt('#plSub'));
 
 /* 定向 mock：每段固定给一辆「距上车站 4 站」的车，确保高亮条可断言 */
@@ -453,6 +434,11 @@ if (hl) {
   ok('无在线车辆时提醒铃铛仍可用', (await cnt('.pl-bell')) > 3);
 }
 ok('展示上下车站', (await cnt('.pl-hop')) >= 2, String(await cnt('.pl-hop')));
+const hopEdit = await page.evaluate(() => {
+  const b = document.querySelector('.pl-hop[data-kind="board"]');
+  return { tag: b.tagName, act: b.dataset.act, hint: b.innerText.indexOf('改') > -1 };
+});
+ok('上下车站可点击修改', hopEdit.tag === 'BUTTON' && hopEdit.act === 'pl-hop' && hopEdit.hint, JSON.stringify(hopEdit));
 ok('展示该段线路站点条', (await cnt('.pl-strip .tl-item')) > 5, String(await cnt('.pl-strip .tl-item')));
 const plStrip = await page.evaluate(() => {
   const sc = document.getElementById('plSc0');
@@ -516,9 +502,14 @@ ok('详情页可关闭提醒', await page.evaluate(() => ZJ.Reminder.list().leng
 ok('关闭后铃铛取消高亮', (await cnt('.pl-bell.on')) === 0, String(await cnt('.pl-bell.on')));
 
 /* 跳转该线路实时页 */
-await page.evaluate(() => document.querySelector('.pl-open-line').click());
+const fullLineBtn = await page.evaluate(() => {
+  const b = document.querySelector('[data-act="pl-full-line"]');
+  return b ? { txt: b.innerText.replace(/\s+/g, ' ').trim(), count: document.querySelectorAll('[data-act="pl-full-line"]').length } : null;
+});
+ok('详情页提供「查看完整线路」次要入口', fullLineBtn && fullLineBtn.txt.indexOf('查看完整线路') > -1, JSON.stringify(fullLineBtn));
+await page.evaluate(() => document.querySelector('[data-act="pl-full-line"]').click());
 await sleep(1200);
-ok('详情页可跳转分段线路实时页', await page.$eval('#page-line', (el) => el.classList.contains('on')));
+ok('点「查看完整线路」进入独立线路页', await page.$eval('#page-line', (el) => el.classList.contains('on')));
 await page.evaluate(() => ZJ.Line.close());
 await sleep(600);
 
@@ -528,7 +519,7 @@ await page.evaluate(() => {
   ZJ.Plan.refresh();
 });
 await sleep(1400);
-ok('接口失效显示降级提示条', (await txt('#plSummary')).indexOf('已自动降级') > -1, (await txt('#plSummary')).slice(0, 60));
+ok('接口失效显示降级提示条', (await txt('#plSummary')).indexOf('已关闭到站预估') > -1, (await txt('#plSummary')).slice(0, 60));
 ok('降级提示提供重试', await has('.degrade-banner [data-act="plan-refresh"]'));
 ok('降级后仍展示分段卡片', (await cnt('.pl-leg')) >= 1, String(await cnt('.pl-leg')));
 ok('降级后站点条仍可用', (await cnt('.pl-strip .tl-item')) > 5);
@@ -539,7 +530,7 @@ await page.evaluate(() => {
   ZJ.Plan.refresh();
 });
 await sleep(1200);
-ok('恢复后实时数据回来', (await txt('#plSummary')).indexOf('已自动降级') === -1, (await txt('#plSummary')).slice(0, 60));
+ok('恢复后实时数据回来', (await txt('#plSummary')).indexOf('已关闭到站预估') === -1, (await txt('#plSummary')).slice(0, 60));
 /* 安卓实体返回键 = history.back()，应先关详情页而不是退出 */
 await page.goBack();
 await sleep(900);
@@ -549,7 +540,7 @@ ok('返回后仍停留在去哪页', await page.$eval('#page-go', (el) => el.cla
 /* 历史 */
 await page.evaluate(() => document.querySelector('.hist-row').click());
 await sleep(900);
-ok('点击历史可重新查询', (await cnt('.plan-card')) >= 1, 'cards=' + (await cnt('.plan-card')));
+ok('点击历史可重新查询', (await cnt('.trip-card')) >= 1, 'cards=' + (await cnt('.trip-card')));
 await page.evaluate(() => document.querySelector('.hist-row .hist-del').click());
 await sleep(500);
 const histDbg = await page.evaluate(() => ({ store: ZJ.Store.get('zjbus.history.v1', []).length, rows: document.querySelectorAll('.hist-row').length }));
@@ -566,14 +557,16 @@ await pickStation('pick-from', '火车站');
 await pickStation('pick-to', '草塔停车场');
 await sleep(1400);
 const goBase = await page.evaluate(() => ({
-  cards: document.querySelectorAll('#planResult .plan-card').length,
-  hero: document.querySelector('#planResult .plan-card .plan-hero').innerText.replace(/\s+/g, ' ').trim(),
-  firstTag: document.querySelector('#planResult .plan-card .plan-tag').innerText.trim(),
+  cards: document.querySelectorAll('#planResult .trip-card').length,
+  dur: (document.querySelector('#planResult .trip-dur') || {}).innerText || '',
+  firstTag: document.querySelector('#planResult .plan-tag').innerText.trim(),
   transfers: ZJ.Go.state().plans[0] ? ZJ.Go.state().plans[0].transfers : -1,
+  stops: ZJ.Go.state().plans[0] ? ZJ.Go.state().plans[0].stops : -1,
   sorted: ZJ.Go.state().plans.every((p, i, a) => i === 0 || a[i - 1].transfers <= p.transfers),
 }));
-ok('正常运营时段展示剩余站数', /到目的地还有\s*\d+\s*站/.test(goBase.hero), goBase.hero);
+ok('正常运营时段列表显示总时长', /\d+/.test(goBase.dur), goBase.dur);
 ok('直达方案优先展示', goBase.firstTag === '直达' && goBase.transfers === 0, JSON.stringify({ tag: goBase.firstTag, tf: goBase.transfers }));
+ok('方案保留剩余站数用于详情页', goBase.stops > 0, String(goBase.stops));
 ok('方案按换乘次数升序排列', goBase.sorted, 'cards=' + goBase.cards);
 
 /* 收班过滤：把首套方案的首段末班改到很早，应被过滤掉 */
@@ -584,13 +577,13 @@ const filterTest = await page.evaluate(() => {
   const old = dir.last;
   dir.last = '06:10';
   ZJ.Go.render();
-  const after = document.querySelectorAll('#planResult .plan-card').length;
-  const offShown = document.querySelectorAll('#planResult .plan-card.off').length;
+  const after = document.querySelectorAll('#planResult .trip-card').length;
+  const offShown = document.querySelectorAll('#planResult .trip-card.off').length;
   dir.last = old;
   ZJ.Go.render();
-  return { before: before, after: after, offShown: offShown, restored: document.querySelectorAll('#planResult .plan-card').length };
+  return { before: before, after: after, offShown: offShown, restored: document.querySelectorAll('#planResult .trip-card').length };
 });
-ok('收班方案被过滤，不展示为可乘', filterTest.after < filterTest.before && filterTest.offShown === 0, JSON.stringify(filterTest));
+ok('收班方案被过滤或明确标注为已收班', filterTest.after < filterTest.before || filterTest.offShown === filterTest.after, JSON.stringify(filterTest));
 ok('恢复运营后方案重新出现', filterTest.restored === filterTest.before, JSON.stringify(filterTest));
 
 /* 切到 23:30：模拟定时刷新，全部方案应判为已收班 */
@@ -598,11 +591,11 @@ const closedGo = await page.evaluate(() => {
   ZJ.Clock.setFixed(23 * 60 + 30);
   ZJ.Go.tick();
   const res = document.getElementById('planResult');
-  const cards = [...res.querySelectorAll('.plan-card')];
+  const cards = [...res.querySelectorAll('.trip-card')];
   return {
     cards: cards.length,
     off: cards.filter((c) => c.classList.contains('off')).length,
-    hero: cards[0] ? cards[0].querySelector('.plan-hero').innerText.replace(/\s+/g, ' ').trim() : '',
+    hero: cards[0] ? cards[0].innerText.replace(/\s+/g, ' ').trim() : '',
     tag: cards[0] ? cards[0].querySelector('.plan-tag').innerText.trim() : '',
     hasRemain: /到目的地还有\s*\d+\s*站/.test(res.innerText),
     hasEta: /\d+:\d+\s*到达/.test(res.innerText),
@@ -617,7 +610,7 @@ ok('收班卡提示明日首班', (await txt('#planResult')).indexOf('明日首�
 ok('全部收班时给出今日末班已过提示', closedGo.banner.indexOf('今日末班已过') > -1, closedGo.banner);
 
 /* 详情页收班态 */
-await page.evaluate(() => document.querySelector('#planResult .plan-open-btn').click());
+await page.evaluate(() => document.querySelector('#planResult .trip-card').click());
 await page.waitForFunction(() => document.getElementById('page-plan').classList.contains('on'), { timeout: 4000 });
 await sleep(1200);
 const closedDetail = await page.evaluate(() => {
@@ -644,14 +637,14 @@ await sleep(700);
 const beforeGo = await page.evaluate(() => {
   ZJ.Clock.setFixed(5 * 60);
   ZJ.Go.tick();
-  const c = document.querySelector('#planResult .plan-card');
+  const c = document.querySelector('#planResult .trip-card');
   return {
-    hero: c ? c.querySelector('.plan-hero').innerText.replace(/\s+/g, ' ').trim() : '',
-    tag: c ? c.querySelector('.plan-tag').innerText.trim() : '',
+    hero: c ? c.innerText.replace(/\s+/g, ' ').trim() : '',
+    tags: c ? [...c.querySelectorAll('.plan-tag')].map((x) => x.innerText.trim()) : [],
     hasRemain: /到目的地还有\s*\d+\s*站/.test(document.getElementById('planResult').innerText),
   };
 });
-ok('首班前显示「首班未发」', /首班未发/.test(beforeGo.hero) && /首班未发/.test(beforeGo.tag), JSON.stringify(beforeGo));
+ok('首班前显示「首班未发」', /首班未发/.test(beforeGo.hero) && beforeGo.tags.indexOf('首班未发') > -1, JSON.stringify(beforeGo));
 ok('首班前提示今日首班时间', /首班\s*\d{1,2}:\d{2}/.test(beforeGo.hero), beforeGo.hero);
 ok('首班前不渲染剩余站数', !beforeGo.hasRemain, beforeGo.hero);
 
@@ -703,13 +696,125 @@ await pickStation('pick-to', '西施殿');
 await sleep(1400);
 const walk = await page.evaluate(() => ({
   card: (document.querySelector('.walk-card') || {}).innerText ? document.querySelector('.walk-card').innerText.replace(/\s+/g, ' ').trim() : '',
-  cards: document.querySelectorAll('#planResult .plan-card').length,
+  cards: document.querySelectorAll('#planResult .trip-card').length,
 }));
 ok('近距离起终点给出步行提示', /步行约\s*\d+\s*分钟/.test(walk.card), walk.card);
 ok('步行提示含直线距离', /两地相距\s*[\d.]+\s*(米|公里)/.test(walk.card), walk.card);
 ok('步行提示不影响公交方案展示', walk.cards >= 1, 'cards=' + walk.cards);
 
 /* ---------------- 13. 边界场景 ---------------- */
+section('AI 出行助手（自然语言 → 方案 → 详情）');
+await page.evaluate(() => { ZJ.setTab('assistant'); ZJ.Clock.setFixed(9 * 60); });
+await sleep(500);
+ok('助手页可打开', await page.$eval('#page-assistant', (el) => el.classList.contains('on')));
+ok('助手给出欢迎语与示例', (await txt('#aiMsgs')).indexOf('从哪到哪') > -1 && (await cnt('.ai-chip')) >= 2, (await txt('#aiMsgs')).slice(0, 40));
+
+const aiSend = async (q) => {
+  await page.evaluate((t) => {
+    const i = document.getElementById('aiQ');
+    i.value = t;
+    document.getElementById('aiForm').dispatchEvent(new Event('submit', { cancelable: true }));
+  }, q);
+  await sleep(1100);
+};
+await aiSend('从火车站到草塔停车场');
+const aiRes = await page.evaluate(() => ({
+  txt: document.getElementById('aiMsgs').innerText.replace(/\s+/g, ' '),
+  cards: document.querySelectorAll('.ai-plan').length,
+  chips: [...document.querySelectorAll('.ai-chip')].map((x) => x.innerText.trim()),
+  first: (document.querySelector('.ai-plan') || {}).innerText ? document.querySelector('.ai-plan').innerText.replace(/\s+/g, ' ') : '',
+}));
+ok('助手识别起终点并给出文字总结', aiRes.txt.indexOf('火车站') > -1 && aiRes.txt.indexOf('草塔停车场') > -1 && /方案/.test(aiRes.txt), aiRes.txt.slice(-120));
+ok('助手返回可点击方案卡', aiRes.cards >= 1, String(aiRes.cards));
+ok('方案卡含时长与线路', /\d+\s*分钟/.test(aiRes.first) && /\d+路/.test(aiRes.first), aiRes.first.slice(0, 80));
+ok('方案卡标注运营/收班状态', /(运营中|已收班|首班未发)/.test(aiRes.first), aiRes.first.slice(0, 60));
+ok('助手提供偏好快捷项', ['最快', '少换乘', '少走路'].every((k) => aiRes.chips.indexOf(k) > -1), aiRes.chips.join('/'));
+
+await page.evaluate(() => document.querySelector('.ai-chip[data-act="ai-pref"][data-v="walk"]').click());
+await sleep(1000);
+ok('助手可按「少走路」重新推荐', (await txt('#aiMsgs')).indexOf('少走路排序') > -1, (await txt('#aiMsgs')).slice(-90));
+
+await page.evaluate(() => document.querySelector('.ai-plan').click());
+await page.waitForFunction(() => document.getElementById('page-plan').classList.contains('on'), { timeout: 4000 });
+await sleep(900);
+ok('点助手方案卡进入换乘详情页', await page.$eval('#page-plan', (el) => el.classList.contains('on')));
+await page.evaluate(() => ZJ.Plan.close());
+await sleep(500);
+await page.evaluate(() => ZJ.setTab('assistant'));
+await sleep(300);
+
+await aiSend('1路首末班几点');
+const aiLine = await txt('#aiMsgs');
+ok('助手可查线路首末班', /1路/.test(aiLine) && /首班\s*\d{1,2}:\d{2}/.test(aiLine) && /末班\s*\d{1,2}:\d{2}/.test(aiLine), aiLine.slice(-120));
+ok('助手给出收班状态', /(运营中|已收班|首班未发)/.test(aiLine), aiLine.slice(-80));
+ok('助手提供打开完整线路入口', await has('.ai-btn[data-act="ai-line"]'));
+
+const notifyCount = await page.evaluate(() => {
+  window.__aiNotify = 0;
+  ZJ.Notify.fire = async () => { window.__aiNotify++; return true; };
+  return window.__aiNotify;
+});
+await aiSend('帮我看看有没有车');
+ok('助手不发送系统推送', (await page.evaluate(() => window.__aiNotify)) === notifyCount, String(await page.evaluate(() => window.__aiNotify)));
+ok('助手对无法识别的问题给出引导', (await txt('#aiMsgs')).indexOf('还没听懂') > -1 || (await txt('#aiMsgs')).indexOf('再试') > -1, (await txt('#aiMsgs')).slice(-80));
+
+section('数据同步与降级自愈（版本增量 / 2 天校准 / 过期提示）');
+const syncBase = await page.evaluate(async () => {
+  const m = await (await fetch('data/manifest.json')).json();
+  const st = ZJ.DataSync.status();
+  return { version: m.version, hash: m.totalHash, chunks: m.chunks.length, dataV: ZJ.Data.version, state: st.state, same: m.version === ZJ.Data.version };
+});
+ok('版本清单可读取且与内置数据同版本', syncBase.same && syncBase.chunks >= 4, JSON.stringify(syncBase));
+ok('清单含每个分片的哈希', await page.evaluate(async () => {
+  const m = await (await fetch('data/manifest.json')).json();
+  return m.chunks.every((c) => /^[0-9a-f]{8}$/.test(c.hash) && c.url && c.bytes > 0);
+}));
+
+const cal = await page.evaluate(async () => {
+  const ok = await ZJ.DataSync.calibrate(true);
+  return { ok: ok, meta: ZJ.Store.get('zjbus.sync.v1', {}).lastFull || 0, state: ZJ.DataSync.status().state };
+});
+ok('可执行全量校准并记录时间', cal.ok && cal.meta > 0, JSON.stringify(cal));
+
+const applied = await page.evaluate(async () => {
+  const m = await (await fetch('data/manifest.json')).json();
+  m.version = m.version + 1;
+  const ok = await ZJ.DataSync.applyManifest(m);
+  return { ok: ok, v: ZJ.DataSync.status().version, dataV: ZJ.Data.version, lines: ZJ.Data.lines.length };
+});
+ok('版本号更高时自动增量同步', applied.ok && applied.dataV === applied.v && applied.lines === 395, JSON.stringify(applied));
+ok('同步后数据版本与清单一致', applied.dataV === syncBase.version + 1, JSON.stringify(applied));
+
+const repair = await page.evaluate(async () => {
+  const cache = ZJ.Store.get('zjbus.ds.v1', null);
+  if (!cache) return { skipped: true };
+  const bad = JSON.parse(JSON.stringify(cache));
+  bad.chunks[0].data = '{"id":"c00","lines":[]}';
+  ZJ.Store.set('zjbus.ds.v1', bad);
+  const ok = await ZJ.DataSync.calibrate(true);
+  const fresh = ZJ.Store.get('zjbus.ds.v1', null);
+  const good = fresh && fresh.chunks && fresh.chunks[0] && ZJ.DataSync.fnv1a(fresh.chunks[0].data) === fresh.chunks[0].hash;
+  return { ok: ok, repaired: !!good, lines: ZJ.Data.lines.length };
+});
+ok('本地分片被改动后可自愈修复', repair.skipped || (repair.ok && repair.repaired && repair.lines === 395), JSON.stringify(repair));
+
+const stale = await page.evaluate(() => {
+  const meta = ZJ.Store.get('zjbus.sync.v1', {});
+  meta.lastCheck = Date.now() - 30 * 86400000;
+  ZJ.Store.set('zjbus.sync.v1', meta);
+  const st = ZJ.DataSync.status();
+  ZJ.setTab('go');
+  ZJ.Go.render();
+  const hint = document.getElementById('goDataHint');
+  return { state: st.state, hint: ZJ.DataSync.hint(), visible: hint ? !hint.hidden : false, txt: hint ? hint.innerText : '' };
+});
+ok('超过校准周期判为过期', stale.state === 'stale', JSON.stringify(stale));
+ok('数据过期给出一行静态提示', stale.visible && stale.txt.length > 4, stale.txt);
+ok('过期提示不是弹窗或红点', await page.evaluate(() => document.getElementById('alertMask').hidden && !document.querySelector('.dot-badge,.red-dot')));
+
+await page.evaluate(() => { ZJ.Store.set('zjbus.sync.v1', { lastCheck: Date.now(), lastOk: Date.now(), lastFull: Date.now() }); ZJ.Go.render(); });
+ok('校准后过期提示自动消失', await page.evaluate(() => document.getElementById('goDataHint').hidden));
+
 section('设置页（主题 / 提醒方式 / 通知权限 / 数据）');
 await page.evaluate(() => ZJ.setTab('settings'));
 await sleep(500);
@@ -803,6 +908,16 @@ const afterClear = await page.evaluate(() => ({
 }));
 ok('清除缓存清空查询记录', afterClear.hist === 0, JSON.stringify(afterClear));
 ok('清除缓存不影响收藏与设置', afterClear.theme === 'rose', JSON.stringify(afterClear));
+
+/* 数据版本卡 */
+const syncCard = await page.evaluate(() => ({
+  ver: document.getElementById('dataVer').textContent.trim(),
+  hint: document.getElementById('dataHint').textContent.trim(),
+  btns: document.querySelectorAll('[data-act="data-check"],[data-act="data-calibrate"]').length,
+}));
+ok('设置页展示数据版本', /^v\d+/.test(syncCard.ver), syncCard.ver);
+ok('设置页展示校准状态', syncCard.hint.length > 6, syncCard.hint);
+ok('设置页提供手动检查与校准', syncCard.btns === 2, String(syncCard.btns));
 
 /* 关于 */
 await page.evaluate(() => document.querySelector('[data-act="about"]').click());
@@ -916,7 +1031,7 @@ await page.evaluate(() => {
 });
 await sleep(1600);
 const errStat = await txt('#lineStat');
-ok('网络异常时显示错误卡', errStat.indexOf('实时车辆暂不可用') > -1, errStat.slice(0, 60));
+ok('网络异常时显示错误卡', errStat.indexOf('实时车辆不可用') > -1, errStat.slice(0, 60));
 ok('错误卡提供重试按钮', await has('[data-act="line-refresh"]'));
 ok('顶部显示降级提示条', (await txt('#lineBanner')).indexOf('自动降级') > -1, (await txt('#lineBanner')).slice(0, 60));
 ok('静态站序仍可用', (await cnt('.vt-row')) > 10, String(await cnt('.vt-row')));
@@ -924,7 +1039,7 @@ ok('静态站点条仍可横向滑动', (await page.evaluate(() => {
   const sc = document.getElementById('tlScroll');
   return sc.scrollWidth > sc.clientWidth;
 })));
-ok('页脚说明静态兜底', (await txt('#lineNote')).indexOf('静态') > -1, await txt('#lineNote'));
+ok('页脚说明时刻表兜底', (await txt('#lineNote')).indexOf('时刻表') > -1, await txt('#lineNote'));
 await page.evaluate(() => ZJ.Line.close());
 await sleep(500);
 
@@ -947,7 +1062,7 @@ await page2.close();
 section('移动端适配与功能边界');
 await page.evaluate(() => { ZJ.setTab('home'); });
 await sleep(400);
-for (const tab of ['home', 'go']) {
+for (const tab of ['home', 'go', 'assistant']) {
   await page.evaluate((t) => ZJ.setTab(t), tab);
   await sleep(350);
   const m = await overflow();
@@ -967,6 +1082,31 @@ ok('未引入任何地图 SDK', !forbidden.mapSdk && !forbidden.mapApi, JSON.str
 ok('没有地图容器', !forbidden.mapEl);
 ok('页面无公告入口', !forbidden.notice);
 ok('无乘车码/反馈/推送/订阅入口', !forbidden.mine, JSON.stringify(forbidden));
+
+section('数据更新联动（首末班校验随新数据刷新）');
+const linkage = await page.evaluate(async () => {
+  ZJ.Clock.setFixed(9 * 60);
+  ZJ.setTab('go');
+  const G = ZJ.Go.state();
+  G.from = '火车站'; G.to = '草塔停车场';
+  ZJ.Go.plan({ silent: true, noHistory: true });
+  await new Promise((r) => setTimeout(r, 400));
+  const before = ZJ.Go.state().plans.length;
+  const dir = ZJ.Go.state().plans[0].legs[0].dir;
+  const oldFirst = dir.first;
+  dir.first = '05:00';
+  dir.last = '05:30';
+  const lateOpen = ZJ.Service.info(dir, 1).state;
+  const m = await (await fetch('data/manifest.json')).json();
+  m.version = m.version + 2;
+  await ZJ.DataSync.applyManifest(m);
+  const after = ZJ.Go.state().plans.length;
+  const newDir = ZJ.Data.lineMap.get(dir.line).dirs.find((d) => d.key === dir.key);
+  return { before: before, after: after, lateOpen: lateOpen, oldFirst: oldFirst, restoredFirst: newDir ? newDir.first : '', lines: ZJ.Data.lines.length };
+});
+ok('收班判定随数据即时变化', linkage.lateOpen === 'closed', JSON.stringify(linkage));
+ok('数据更新后自动重建索引并重新规划', linkage.after > 0 && linkage.lines === 395, JSON.stringify(linkage));
+ok('更新后首末班恢复为官方数据', linkage.restoredFirst === linkage.oldFirst, JSON.stringify(linkage));
 
 section('控制台');
 const jsErrors = errors.filter((e) => !/Failed to load resource|net::ERR|ERR_/i.test(e));

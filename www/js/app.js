@@ -44,7 +44,7 @@
   ZJ.Geo = Geo;
 
   /* ================= Tab ================= */
-  const TABS = { home: 1, go: 1, settings: 1 };
+  const TABS = { home: 1, go: 1, assistant: 1, settings: 1 };
   let tab = 'home';
   function setTab(name) {
     if (!TABS[name]) return;
@@ -53,6 +53,7 @@
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     window.scrollTo(0, 0);
     if (name === 'go' && ZJ.Go) ZJ.Go.render();
+    if (name === 'assistant' && ZJ.AI) ZJ.AI.render();
     if (name === 'settings' && ZJ.Settings) ZJ.Settings.render();
   }
   ZJ.setTab = setTab;
@@ -64,7 +65,21 @@
     setTab('home');
     if (ZJ.Home) ZJ.Home.renderAll();
     if (ZJ.Go) ZJ.Go.render();
+    if (ZJ.AI) ZJ.AI.render();
     if (ZJ.Settings) ZJ.Settings.render();
+
+    /* 数据版本同步：静默更新，不弹窗、不通知；更新后自动重建索引并刷新首末班判定 */
+    if (ZJ.DataSync) {
+      ZJ.DataSync.on(() => {
+        if (ZJ.Go) ZJ.Go.afterData();
+        if (ZJ.Plan) ZJ.Plan.afterData();
+        if (ZJ.Line && document.getElementById('page-line').classList.contains('on')) ZJ.Line.refresh();
+        if (ZJ.Station && document.getElementById('page-station').classList.contains('on')) ZJ.Station.refresh();
+        if (ZJ.Home) ZJ.Home.renderAll();
+        if (ZJ.Settings) ZJ.Settings.render();
+      });
+      ZJ.DataSync.start();
+    }
 
     const bar = $('tabbar');
     bar.addEventListener('click', (e) => {

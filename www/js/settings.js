@@ -57,6 +57,15 @@
     }
   }
 
+  /* 数据版本：只做状态展示，不弹窗、不置红点 */
+  function renderSync() {
+    const boxV = $('dataVer'), boxH = $('dataHint');
+    if (!boxV || !boxH || !ZJ.DataSync) return;
+    const st = ZJ.DataSync.status();
+    boxV.textContent = 'v' + st.version;
+    boxH.textContent = ZJ.DataSync.hint() + (st.lastFull ? ' · 最近全量校准 ' + ZJ.clock(new Date(st.lastFull)).slice(0, 5) : '');
+  }
+
   async function checkPerm() {
     try { permState = await ZJ.Notify.status(); } catch (e) { permState = 'prompt'; }
     permChecked = true;
@@ -87,8 +96,10 @@
       renderTheme();
       renderSwitches();
       $('verTxt').textContent = '诸暨公交 v' + ZJ.CFG.VERSION;
+      renderSync();
       checkPerm();
     },
+    renderSync: renderSync,
     perm() { return permState; },
     permChecked() { return permChecked; },
     /* 提醒开启后调用：没有通知权限时给明确提示（每个会话只提示一次） */
@@ -194,6 +205,19 @@
     if (ZJ.Home && ZJ.Home.renderAll) ZJ.Home.renderAll();
     ZJ.toast('缓存已清除（收藏与提醒保留）');
   });
+  ZJ.act('data-check', async () => {
+    ZJ.toast('正在检查数据版本…');
+    const ok = await ZJ.DataSync.check();
+    renderSync();
+    const st = ZJ.DataSync.status();
+    ZJ.toast(ok ? (st.version ? '已是最新数据 v' + st.version : '数据已是最新') : '暂时连不上官方数据，继续使用本地版本');
+  });
+  ZJ.act('data-calibrate', async () => {
+    ZJ.toast('正在全量校准…');
+    const ok = await ZJ.DataSync.calibrate(true);
+    renderSync();
+    ZJ.toast(ok ? '校准完成，数据一致' : '校准未完成，稍后自动重试');
+  });
   ZJ.act('about', () => {
     const lines = ZJ.Data.lines.length;
     const stations = ZJ.Data.stations.length;
@@ -203,8 +227,10 @@
       '<div class="about-row"><span>版本</span><b>v' + ZJ.CFG.VERSION + '（Android 包 1.4.0）</b></div>' +
       '<div class="about-row"><span>包名</span><b>com.zhuji.bus.lite</b></div>' +
       '<div class="about-row"><span>数据</span><b>' + lines + ' 条线路 · ' + stations + ' 个站点</b></div>' +
+      '<div class="about-row"><span>数据版本</span><b>v' + (ZJ.Data.version || '—') + ' · ' + ZJ.esc(ZJ.Data.generated || '—') + '</b></div>' +
       '<div class="about-row"><span>实时数据</span><b>诸暨公交官方接口</b></div>' +
       '<div class="about-row"><span>定位</span><b>仅用于“我的位置”，不上传</b></div>' +
+      '<div class="about-row"><span>数据同步</span><b>版本增量同步 · 每 2 天全量校准</b></div>' +
       '<div class="about-row"><span>许可</span><b>MIT</b></div>' +
       '<p class="sheet-note" style="margin-top:12px">本应用为便民工具，非官方发布。换乘与耗时为本地估算，实际以运营为准。到站提醒依赖实时接口，接口中断时提醒会暂停。</p>' +
       '</div>'

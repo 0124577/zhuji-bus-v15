@@ -93,7 +93,11 @@
     STATION_POLL: 30000,
     REMIND_POLL: 15000,
     MAX_FAV: 30,
-    VERSION: '1.4.0'
+    VERSION: '1.5.0',
+    MANIFEST_URL: 'data/manifest.json',
+    SYNC_INTERVAL: 6 * 3600 * 1000,
+    CALIBRATE_INTERVAL: 2 * 86400000,
+    DATA_STALE_DAYS: 30
   };
 
   /* ================= 偏好设置（主题 / 提示音 / 震动 / 音量 / 轮询） ================= */
@@ -246,97 +250,37 @@
   };
   ZJ.Notify = Notify;
 
-  /* ================= 静态数据索引 ================= */
-  const SNAP = window.SNAPSHOT || { names: [], lines: [] };
-  const NAMES = SNAP.names || [];
-  const lines = [];
-  const lineMap = new Map();
-  const dirById = new Map();
-  const stationMap = new Map();
-  let stopCount = 0;
-
-  (SNAP.lines || []).forEach((L) => {
-    const dirs = (L.d || []).map((d) => {
-      let cum = 0;
-      const stops = (d.s || []).map((s, i) => {
-        const st = {
-          o: i + 1,
-          name: NAMES[s[0]] || '',
-          lat: (s[2] || 0) / 100000,
-          lng: (s[3] || 0) / 100000,
-          seg: s[1] || 0,
-          cum: cum
-        };
-        cum += st.seg;
-        return st;
-      });
-      const dir = {
-        key: d.k,
-        id: d.id,
-        first: ZJ.hm(d.f),
-        last: ZJ.hm(d.l),
-        line: L.n,
-        stops: stops,
-        total: cum,
-        start: stops.length ? stops[0].name : '',
-        end: stops.length ? stops[stops.length - 1].name : ''
-      };
-      stopCount += stops.length;
-      dirById.set(dir.id, dir);
-      stops.forEach((st) => {
-        if (!st.name) return;
-        let s = stationMap.get(st.name);
-        if (!s) {
-          s = { name: st.name, lat: st.lat, lng: st.lng, entries: [] };
-          stationMap.set(st.name, s);
-        }
-        s.entries.push({ line: L.n, dir: dir, order: st.o });
-        if (!s.lat && st.lat) { s.lat = st.lat; s.lng = st.lng; }
-      });
-      return dir;
-    });
-    const line = { name: L.n, dirs: dirs };
-    lines.push(line);
-    lineMap.set(line.name, line);
-  });
-
+/* ================= 静态数据索引（可重建：版本同步后原地替换） ================= */
   function lineSortKey(n) {
     const m = String(n).match(/^(\d+)/);
     return m ? [0, +m[1], String(n)] : [1, 0, String(n)];
   }
-  lines.sort((a, b) => {
-    const x = lineSortKey(a.name), y = lineSortKey(b.name);
-    return x[0] - y[0] || x[1] - y[1] || x[2].localeCompare(y[2], 'zh');
-  });
 
-  const stationList = [...stationMap.values()];
-
-  function rideMeters(dir, fromOrder, toOrder) {
-    let m = 0;
-    for (let i = fromOrder - 1; i < toOrder - 1; i++) m += dir.stops[i].seg || 0;
-    return m || (toOrder - fromOrder) * 500;
-  }
-  function rideMinutes(dir, fromOrder, toOrder) {
-    return Math.max(1, Math.round(rideMeters(dir, fromOrder, toOrder) / ZJ.CFG.AVG_SPEED + (toOrder - fromOrder) * ZJ.CFG.DWELL));
-  }
-
-  ZJ.Data = {
-    names: NAMES,
-    lines: lines,
-    lineMap: lineMap,
-    dirs: dirById,
-    stations: stationList,
-    stationMap: stationMap,
-    stopCount: stopCount,
-    generated: SNAP.generated || '',
-    lineOf: (n) => lineMap.get(n) || null,
-    stationOf: (n) => stationMap.get(n) || null,
-    rideMeters: rideMeters,
-    rideMinutes: rideMinutes,
+  const Data = {
+    names: [],
+    lines: [],
+    lineMap: new Map(),
+    dirs: new Map(),
+    stations: [],
+    stationMap: new Map(),
+    stopCount: 0,
+    generated: '',
+    version: 0,
+    source: 'bundled',
+    lineOf: (n) => Data.lineMap.get(n) || null,
+    stationOf: (n) => Data.stationMap.get(n) || null,
+    rideMeters(dir, fromOrder, toOrder) {
+      let m = 0;
+      for (let i = fromOrder - 1; i < toOrder - 1; i++) m += dir.stops[i].seg || 0;
+      return m || (toOrder - fromOrder) * 500;
+    },
+    rideMinutes(dir, fromOrder, toOrder) {
+      return Math.max(1, Math.round(Data.rideMeters(dir, fromOrder, toOrder) / ZJ.CFG.AVG_SPEED + (toOrder - fromOrder) * ZJ.CFG.DWELL));
+    },
     searchLines(kw, limit) {
       const q = String(kw || '').trim().replace(/\s+/g, '');
-      if (!q) return lines.slice(0, limit || 395);
-      const hit = lines.filter((l) => l.name.replace(/\s+/g, '').indexOf(q) > -1);
+      if (!q) return Data.lines.slice(0, limit || Data.lines.length);
+      const hit = Data.lines.filter((l) => l.name.replace(/\s+/g, '').indexOf(q) > -1);
       hit.sort((a, b) => {
         const ax = a.name === q || a.name === q + '路' ? 0 : a.name.indexOf(q) === 0 ? 1 : 2;
         const bx = b.name === q || b.name === q + '路' ? 0 : b.name.indexOf(q) === 0 ? 1 : 2;
@@ -347,7 +291,7 @@
     searchStations(kw, limit) {
       const q = String(kw || '').trim();
       if (!q) return [];
-      const hit = stationList.filter((s) => s.name.indexOf(q) > -1);
+      const hit = Data.stations.filter((s) => s.name.indexOf(q) > -1);
       hit.sort((a, b) => {
         const ax = a.name.indexOf(q) === 0 ? 0 : 1;
         const bx = b.name.indexOf(q) === 0 ? 0 : 1;
@@ -358,22 +302,93 @@
     nearby(lat, lng, limit) {
       if (!lat || !lng) return [];
       const out = [];
-      stationList.forEach((s) => {
+      Data.stations.forEach((s) => {
         if (!s.lat || !s.lng) return;
         const d = ZJ.hav(lat, lng, s.lat, s.lng);
         if (d < 12000) out.push({ station: s, dist: d });
       });
       out.sort((a, b) => a.dist - b.dist);
-      const seen = new Set();
-      const uniq = [];
-      out.forEach((x) => {
-        if (seen.has(x.station.name)) return;
-        seen.add(x.station.name);
-        uniq.push(x);
+      return out.slice(0, limit || 6);
+    },
+    /* dataset: { version, generated, names?, lines:[{n, d:[{k,id,f,l,s:[[name|idx,seg,lat,lng]]}]}] } */
+    rebuild(dataset) {
+      const ds = dataset || { lines: [] };
+      const names = ds.names || [];
+      const lineMap = new Map();
+      const dirById = new Map();
+      const stationMap = new Map();
+      const lines = [];
+      let stopCount = 0;
+
+      (ds.lines || []).forEach((L) => {
+        const srcDirs = L.d || L.dirs || [];
+        const dirs = srcDirs.map((d) => {
+          let cum = 0;
+          const srcStops = d.s || d.stops || [];
+          const stops = srcStops.map((s, i) => {
+            const name = typeof s[0] === 'string' ? s[0] : (names[s[0]] || '');
+            const st = {
+              o: i + 1,
+              name: name,
+              lat: (s[2] || 0) / 100000,
+              lng: (s[3] || 0) / 100000,
+              seg: s[1] || 0,
+              cum: cum
+            };
+            cum += st.seg;
+            return st;
+          });
+          const dir = {
+            key: d.k,
+            id: d.id,
+            first: ZJ.hm(d.f),
+            last: ZJ.hm(d.l),
+            line: L.n,
+            stops: stops,
+            total: cum,
+            start: stops.length ? stops[0].name : '',
+            end: stops.length ? stops[stops.length - 1].name : ''
+          };
+          stopCount += stops.length;
+          dirById.set(dir.id, dir);
+          stops.forEach((st) => {
+            if (!st.name) return;
+            let s = stationMap.get(st.name);
+            if (!s) {
+              s = { name: st.name, lat: st.lat, lng: st.lng, entries: [] };
+              stationMap.set(st.name, s);
+            }
+            s.entries.push({ line: L.n, dir: dir, order: st.o });
+            if (!s.lat && st.lat) { s.lat = st.lat; s.lng = st.lng; }
+          });
+          return dir;
+        });
+        const line = { name: L.n, dirs: dirs };
+        lines.push(line);
+        lineMap.set(L.n, line);
       });
-      return uniq.slice(0, limit || 6);
+
+      lines.sort((a, b) => {
+        const x = lineSortKey(a.name), y = lineSortKey(b.name);
+        return x[0] - y[0] || x[1] - y[1] || x[2].localeCompare(y[2], 'zh');
+      });
+
+      Data.names = names.length ? names : [...stationMap.keys()];
+      Data.lines = lines;
+      Data.lineMap = lineMap;
+      Data.dirs = dirById;
+      Data.stationMap = stationMap;
+      Data.stations = [...stationMap.values()];
+      Data.stopCount = stopCount;
+      Data.generated = ds.generated || '';
+      Data.version = Number(ds.version) || 0;
+      Data.source = ds.source || 'bundled';
+      Data.buildAt = Date.now();
+      return Data;
     }
   };
+  ZJ.Data = Data;
+  Data.rebuild(window.SNAPSHOT || { lines: [] });
 
   /* ================= 运营时段判断 ================= */
   /* ================= 首末班运营状态（每次渲染都按当前时间重算） =================
@@ -619,6 +634,8 @@
         let eta = '';
         if (offTxt) {
           eta = '<span class="vt-eta off">' + ZJ.esc(offTxt) + '</span>';
+        } else if (opt.etaOff) {
+          eta = '<span class="vt-eta dim">时刻表</span>';
         } else if (hasLive && here.length) {
           eta = '';
         } else if (hasLive) {

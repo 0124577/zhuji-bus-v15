@@ -108,10 +108,11 @@
         ' · 收班后不再显示剩余站数与到站时间</p></div>';
       return;
     }
-    if (S.err) {
+    if (S.err || ZJ.Api.liveOff) {
       box.innerHTML =
-        '<div class="stat-empty"><b>实时车辆暂不可用</b>' +
-        '<p>' + ZJ.esc(S.err) + '<br>已切换为静态数据，站点与首末班照常可用</p>' +
+        '<div class="stat-empty"><b>实时车辆不可用，已关闭到站预估</b>' +
+        '<p>' + ZJ.esc(S.err || '实时接口已降级') + '<br>按时刻表乘车，站点、首末班照常可用</p>' +
+        '<p class="tt-line">起点发车：<b>' + ZJ.esc(ZJ.Timetable.text(d, order)) + '</b></p>' +
         '<button class="retry" data-act="line-refresh">重新获取</button></div>';
       return;
     }
@@ -189,6 +190,7 @@
     $('stopList').innerHTML = ZJ.VTimeline.html(d, {
       selected: selOrder,
       vehicles: S.vehicles,
+      etaOff: !svc.off && (ZJ.Api.liveOff || !!S.err),
       off: svc.off,
       offTxt: svc.state === 'before' ? '首班未发' : '已收班',
       err: S.err,
@@ -225,8 +227,8 @@
     renderTimeline();
     renderMyStop();
     renderStops();
-    $('lineNote').textContent = S.err
-      ? '实时接口暂不可用，当前显示静态站点数据（首末班 / 站序），仅供参考'
+    $('lineNote').textContent = (S.err || ZJ.Api.liveOff)
+      ? '实时接口暂不可用，已关闭到站预估，按时刻表与首末班展示，仅供参考'
       : '车辆位置与到站时间为实时接口估算，计划班次为静态数据，仅供参考，受路况影响';
   }
 
@@ -270,6 +272,7 @@
       S.at = Date.now();
       S.err = e.message || '网络异常';
       S.vehicles = [];
+      if (ZJ.Api.mode !== 'static') ZJ.Timetable.load(S.dir).then(() => renderAll());
       renderAll();
     }
   }

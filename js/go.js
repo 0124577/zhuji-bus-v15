@@ -1,11 +1,15 @@
-/* 去哪：直达优先 / 最少换乘 / 历史记录（全部本地静态数据计算） */
+/* 出行：方案列表（精简卡片：总时长 / 步行距离 / 公交线路 / 车辆实时状态）
+   点卡片进入换乘详情页；列表页不再跳独立线路页 */
 (function () {
   const ZJ = window.ZJ;
   const $ = ZJ.$;
   const Data = ZJ.Data;
   const HIST_KEY = 'zjbus.history.v1';
 
-  const G = { from: '', to: '', plans: [], idx: 0, computing: false, tip: '', walk: null, allClosed: false, note: '' };
+  const G = {
+    from: '', to: '', plans: [], idx: 0, computing: false, tip: '',
+    walk: null, allClosed: false, live: new Map(), sig: '', timer: null
+  };
 
   /* ---------- 历史 ---------- */
   function history() { return ZJ.Store.get(HIST_KEY, []); }
@@ -24,7 +28,7 @@
   function renderHistory() {
     const list = history();
     if (!list.length) {
-      $('histList').innerHTML = '<div class="empty-block">还没有搜索记录<br>查询一次换乘方案就会自动保存</div>';
+      $('histList').innerHTML = '<div class="empty-block">还没有查询记录<br>查询一次换乘方案就会自动保存</div>';
       return;
     }
     $('histList').innerHTML = list.map((h, i) =>
@@ -43,156 +47,67 @@
     tc.classList.toggle('ph', !G.to);
   }
 
-  /* ---------- 方案计算 ---------- */
-  function makeLeg(dir, fromOrder, toOrder) {
-    return {
-      line: dir.line,
-      dir: dir,
-      fromOrder: fromOrder,
-      toOrder: toOrder,
-      from: dir.stops[fromOrder - 1].name,
-      to: dir.stops[toOrder - 1].name,
-      stops: toOrder - fromOrder,
-      meters: Math.max(0, dir.stops[toOrder - 1].cum - dir.stops[fromOrder - 1].cum),
-      minutes: Data.rideMinutes(dir, fromOrder, toOrder),
-      key: dir.id + ':' + fromOrder + '-' + toOrder
-    };
-  }
-  function buildPlan(legs) {
-    const transfers = Math.max(0, legs.length - 1);
-    const ride = legs.reduce((s, l) => s + l.minutes, 0);
-    const total = ride + transfers * 5;
-    const meters = legs.reduce((s, l) => s + l.meters, 0);
-    const stops = legs.reduce((s, l) => s + l.stops, 0);
-    return { legs: legs, transfers: transfers, total: total, ride: ride, meters: meters, stops: stops, key: legs.map((l) => l.key).join('>') };
-  }
-  function dedupe(list, limit) {
-    const map = new Map();
-    list.forEach((p) => {
-      const old = map.get(p.key);
-      if (!old || p.total < old.total) map.set(p.key, p);
-    });
-    return [...map.values()].sort((a, b) => a.transfers - b.transfers || a.total - b.total).slice(0, limit || 6);
+  /* ---------- 实时状态 ---------- */
+  function liveOf(id) { return G.live.get(id) || { loading: true, at: 0 }; }
+
+  function vehStatus(p) {
+    const leg = p.legs[0];
+    if (p.off) return { cls: 'off', txt: p.closed ? '已收班' : '首班未发' };
+    const d = liveOf(leg.dir.id);
+    if (ZJ.Api.mode === 'static') return { cls: 'dim', txt: '静态模式 · 仅时刻表' };
+    if (d.err) {
+      const tt = ZJ.Timetable.cached(leg.dir, leg.fromOrder, 3);
+      return { cls: 'warn', txt: '实时不可用' + (tt && tt.length ? ' · 时刻表 ' + tt.map((x) => x.dep).join(' · ') : ' · 仅首末班') };
+    }
+    if (!d.at) return { cls: 'dim', txt: '正在获取车辆…' };
+    const arr = (d.vehicles || []).length ? ZJ.RT.arrivalsTo(leg.dir, d.vehicles, leg.fromOrder) : [];
+    if (!arr.length) {
+      const tt = ZJ.Timetable.cached(leg.dir, leg.fromOrder, 3);
+      return { cls: 'dim', txt: '暂无在线车辆' + (tt && tt.length ? ' · 时刻表 ' + tt.map((x) => x.dep).join(' · ') : '') };
+    }
+    const b = arr[0];
+    return { cls: 'live', txt: leg.line + (b.atStation ? ' 车已到站' : ' 还有 ' + b.remain + ' 站') };
   }
 
-  function findDirect(from, to) {
-    const out = [];
-    const a = Data.stationMap.get(from), b = Data.stationMap.get(to);
-    if (!a || !b) return out;
-    a.entries.forEach((x) => b.entries.forEach((y) => {
-      if (x.dir === y.dir && y.order > x.order) out.push(buildPlan([makeLeg(x.dir, x.order, y.order)]));
-    }));
-    return dedupe(out);
-  }
-
-  function endReach(to) {
-    const map = new Map();
-    const best = new Map();
-    const t = Data.stationMap.get(to);
-    if (!t) return { map: map, best: best };
-    t.entries.forEach((e) => {
-      const d = e.dir;
-      for (let o = 1; o < e.order; o++) {
-        if (!map.has(d.id)) map.set(d.id, new Map());
-        const m = Data.rideMinutes(d, o, e.order);
-        const old = map.get(d.id).get(o);
-        if (!old || m < old.minutes) map.get(d.id).set(o, { entry: e, minutes: m });
+  async function loadLive() {
+    if (!G.plans.length) return;
+    const dirs = new Map();
+    G.plans.forEach((p) => { if (!p.off) dirs.set(p.legs[0].dir.id, p.legs[0].dir); });
+    if (!dirs.size) return;
+    await ZJ.batch([...dirs.keys()], 3, async (id) => {
+      const old = G.live.get(id);
+      if (old && old.at && Date.now() - old.at < 8000) return;
+      try {
+        const data = await ZJ.Api.vehicles(id);
+        G.live.set(id, { vehicles: ZJ.RT.normalize(dirs.get(id), data), at: Date.now(), err: '' });
+      } catch (e) {
+        G.live.set(id, { vehicles: [], at: Date.now(), err: (e && e.message) || '网络异常' });
       }
     });
-    map.forEach((orders, dirId) => {
-      const d = Data.dirs.get(dirId);
-      orders.forEach((v, order) => {
-        const name = d.stops[order - 1].name;
-        const old = best.get(name);
-        if (!old || v.minutes < old.minutes) best.set(name, { dir: d, boardOrder: order, entry: v.entry, minutes: v.minutes });
-      });
-    });
-    return { map: map, best: best };
+    /* 只有实时失败时才补时刻表，避免对正常线路发多余请求 */
+    if (ZJ.Api.mode !== 'static' && [...G.live.values()].some((x) => x.err)) {
+      dirs.forEach((d) => { ZJ.Timetable.load(d).then(() => { if ($('page-go').classList.contains('on')) renderPlans(); }); });
+    }
+    if ($('page-go').classList.contains('on')) renderPlans();
   }
 
-  function findTransfer(from, to, reach) {
-    const out = [];
-    const a = Data.stationMap.get(from);
-    if (!a) return out;
-    a.entries.forEach((x) => {
-      const d = x.dir;
-      for (let o = x.order + 1; o <= d.stops.length; o++) {
-        const tName = d.stops[o - 1].name;
-        if (tName === to) continue;
-        const hub = Data.stationMap.get(tName);
-        if (!hub) continue;
-        hub.entries.forEach((y) => {
-          if (y.dir === d) return;
-          const next = (reach.map.get(y.dir.id) || new Map()).get(y.order);
-          if (!next) return;
-          out.push(buildPlan([makeLeg(d, x.order, o), makeLeg(y.dir, y.order, next.entry.order)]));
-        });
-      }
-    });
-    return dedupe(out);
+  function startLive() {
+    stopLive();
+    G.timer = setInterval(() => {
+      if (document.visibilityState === 'visible' && $('page-go').classList.contains('on')) loadLive();
+    }, 20000);
   }
+  function stopLive() { if (G.timer) clearInterval(G.timer); G.timer = null; }
 
-  function findTwoTransfer(from, to, reach) {
-    const out = [];
-    const a = Data.stationMap.get(from);
-    if (!a) return out;
-    let stopped = false;
-    a.entries.forEach((x) => {
-      if (stopped) return;
-      const d1 = x.dir;
-      for (let o1 = x.order + 1; o1 <= d1.stops.length && !stopped; o1++) {
-        const h1 = d1.stops[o1 - 1].name;
-        if (h1 === to) continue;
-        const s1 = Data.stationMap.get(h1);
-        if (!s1) continue;
-        s1.entries.forEach((y) => {
-          if (stopped || y.dir === d1) return;
-          const d2 = y.dir;
-          for (let o2 = y.order + 1; o2 <= d2.stops.length; o2++) {
-            const h2 = d2.stops[o2 - 1].name;
-            if (h2 === from || h2 === to || h2 === h1) continue;
-            const c = reach.best.get(h2);
-            if (!c || c.entry.dir === d2) continue;
-            out.push(buildPlan([makeLeg(d1, x.order, o1), makeLeg(d2, y.order, o2), makeLeg(c.dir, c.boardOrder, c.entry.order)]));
-            if (out.length > 200) { stopped = true; return; }
-          }
-        });
-      }
-    });
-    return dedupe(out);
-  }
-
+  /* ---------- 渲染 ---------- */
   function renderTip(msg) {
     $('planResult').innerHTML =
       '<div class="plan-empty tip"><svg class="ico"><use href="#i-route"/></svg><b>' + ZJ.esc(msg) + '</b></div>';
   }
-
   function renderPrompt() {
     $('planResult').innerHTML =
       '<div class="plan-empty"><svg class="ico"><use href="#i-route"/></svg>' +
       '<b>输入起点和终点</b>点上面两个框，选好站就会自动规划</div>';
-  }
-
-  /* ---------- 运营状态标注（每次渲染都按当前时间重算） ---------- */
-  function annotate(p) {
-    p.svcs = p.legs.map((l) => ZJ.Service.info(l.dir, l.fromOrder));
-    p.closed = p.svcs.some((s) => s.state === 'closed');
-    p.before = p.svcs.some((s) => s.state === 'before');
-    p.off = p.closed || p.before;
-    p.lastGone = !p.off && p.svcs.some((s) => s.state === 'lastGone');
-    const off = p.svcs.filter((s) => s.off)[0];
-    p.offInfo = off || null;
-    p.state = p.closed ? 'closed' : p.before ? 'before' : p.lastGone ? 'lastGone' : 'running';
-    return p;
-  }
-
-  /* 近距离：直线距离 ≤ 1.2 公里时给出步行建议（步行速度按 70 米/分钟） */
-  function walkInfo(from, to) {
-    const a = Data.stationOf(from), b = Data.stationOf(to);
-    if (!a || !b || !a.lat || !b.lat) return null;
-    const meters = Math.round(ZJ.hav(a.lat, a.lng, b.lat, b.lng));
-    if (!(meters > 0) || meters > 1200) return null;
-    return { meters: meters, minutes: Math.max(1, Math.round(meters / 70)) };
   }
 
   function renderWalk(w) {
@@ -204,87 +119,32 @@
       ' · 直线距离估算</span></div></div>';
   }
 
-  function metric(label, val) {
-    return '<div class="pm"><b>' + val + '</b><span>' + label + '</span></div>';
-  }
-
-  function legLines(p) {
+  function chain(p) {
     return p.legs.map((l) =>
-      '<span class="pl-chain"><span class="leg-badge">' + ZJ.esc(l.line) + '</span>' +
-      '<span>' + ZJ.esc(l.from) + ' → ' + ZJ.esc(l.to) + '</span></span>').join('<span class="pl-arrow">›</span>');
+      '<span class="tc-line"><span class="leg-badge">' + ZJ.esc(l.line) + '</span>' +
+      '<span class="tc-to">' + ZJ.esc(l.to) + '</span></span>').join('<span class="tc-arrow">›</span>');
   }
 
-  function legDetail(p) {
-    return p.legs.map((l, i) => {
-      const last = i === p.legs.length - 1;
-      return '<div class="leg">' +
-        '<div class="leg-top"><span class="leg-badge">' + ZJ.esc(l.line) + '</span>' +
-        '<b>' + ZJ.esc(l.from) + ' → ' + ZJ.esc(l.to) + '</b></div>' +
-        '<div class="leg-meta">' + (p.off
-          ? '往 ' + ZJ.esc(l.dir.end) + ' · 运营时段 ' + ZJ.esc(l.dir.first) + ' – ' + ZJ.esc(l.dir.last)
-          : '乘 ' + l.stops + ' 站 · 约 ' + l.minutes + ' 分钟 · 往 ' + ZJ.esc(l.dir.end)) + '</div>' +
-        (last ? '<div class="leg-end">到 <b>' + ZJ.esc(l.to) + '</b> 下车</div>'
-          : '<div class="leg-end">在 <b>' + ZJ.esc(l.to) + '</b> 同站换乘</div>') +
-        '</div>';
-    }).join('');
-  }
-
-  /* 复用详情页同一套横向站点时间轴组件 */
-  function stripsHtml(p) {
-    return p.legs.map((l, i) =>
-      '<div class="pl-strip-h"><b>' + ZJ.esc(l.line) + ' 沿途站点</b>' +
-      '<span class="tl-hint" id="goHint' + i + '" data-total="' + l.dir.stops.length + '">左右滑动浏览</span></div>' +
-      '<div class="tl-scroll pl-strip" id="goSc' + i + '"><div class="tl tl-sm" id="goTl' + i + '"></div></div>').join('');
-  }
-
-  function mountStrips(p) {
-    p.legs.forEach((l, i) => {
-      const el = $('goTl' + i);
-      if (!el) return;
-      ZJ.Timeline.mount(l.dir, { el: el, board: l.fromOrder, alight: l.toOrder, focus: l.fromOrder, vehicles: [], stopAct: 'noop' });
-      ZJ.Timeline.bindHint($('goSc' + i), $('goHint' + i));
-    });
-  }
-
-  function planCard(p, i, n) {
-    const sel = i === G.idx;
-    /* 相邻站点里程可能为 0（官方站距缺失），此时不显示「0 米」 */
+  function tripCard(p, i, n) {
+    const v = vehStatus(p);
     const meters = p.meters >= 50 ? ZJ.distTxt(p.meters) : '相邻站点';
-    let head, hero, sub, metrics;
-    if (p.off) {
-      const s = p.offInfo || p.svcs[0];
-      head = '<span class="plan-no">方案 ' + (n + 1) + '</span>' +
-        '<span class="plan-tag gray">' + (p.closed ? '已收班' : '首班未发') + '</span>';
-      hero = '<div class="plan-hero off">' + (p.closed ? '已收班' : '首班未发') +
-        '<span class="kind gray">' + ZJ.esc(ZJ.Service.note(s)) + '</span></div>';
-      sub = ZJ.esc(ZJ.Service.resume(s)) + ' · 运营时段 ' + ZJ.esc(s.firstTxt) + ' – ' + ZJ.esc(s.lastTxt);
-      metrics = metric('换乘', p.transfers ? p.transfers + ' 次' : '直达') +
-        metric('里程', meters) + metric('首班', ZJ.esc(s.firstTxt)) + metric('末班', ZJ.esc(s.lastTxt));
-    } else {
-      head = '<span class="plan-no">方案 ' + (n + 1) + '</span>' +
-        '<span class="plan-tag">' + (p.transfers === 0 ? '直达' : p.transfers + ' 次换乘') + '</span>' +
-        (n === 0 ? '<span class="plan-tag rec">推荐</span>' : '') +
-        (p.lastGone ? '<span class="plan-tag warn">末班车已发出</span>' : '');
-      hero = '<div class="plan-hero">到目的地还有 <b>' + p.stops + '</b> 站' +
-        '<span class="kind' + (p.transfers ? ' tf' : '') + '">' + (p.transfers === 0 ? '直达' : '换乘 ' + p.transfers + ' 次') + '</span></div>';
-      sub = '约 <b>' + p.total + '</b> 分钟 · ' + ZJ.minHM(ZJ.nowMin() + p.total) + ' 到达 · ' + meters;
-      metrics = metric('耗时', p.total + ' 分') + metric('站数', p.stops + ' 站') +
-        metric('换乘', p.transfers ? p.transfers + ' 次' : '0 次') + metric('里程', meters);
-    }
-    return '<div class="plan-card plan-cardlink' + (sel ? ' sel' : '') + (p.off ? ' off' : '') + '"' +
-      ' data-act="plan-pick" data-i="' + i + '">' +
-      '<div class="plan-head">' + head + '</div>' +
-      hero +
-      '<div class="plan-sub">' + sub + '</div>' +
-      '<div class="plan-metrics">' + metrics + '</div>' +
-      (sel ? '' : '<div class="plan-chain">' + legLines(p) + '</div>') +
-      (sel
-        ? '<div class="plan-body">' + legDetail(p) + (p.off ? '' : stripsHtml(p)) +
-          '<button class="plan-open-btn" data-act="plan-open" data-i="' + i + '">' +
-          (p.off ? '查看站点与运营时段' : '看实时车辆与到站提醒') +
-          '<svg class="ico"><use href="#i-right"/></svg></button></div>'
-        : '<div class="plan-peek">展开分段与实时车辆<svg class="ico"><use href="#i-right"/></svg></div>') +
-      '</div>';
+    const walk = p.walkMeters > 0 ? '步行 ' + ZJ.distTxt(p.walkMeters) : '无需步行换乘';
+    const tags = p.off
+      ? '<span class="plan-tag gray">' + (p.closed ? '已收班' : '首班未发') + '</span>'
+      : ((n === 0 ? '<span class="plan-tag rec">推荐</span>' : '') +
+        (p.lastGone ? '<span class="plan-tag warn">末班车已发出</span>' : ''));
+    const offNote = p.offInfo ? ZJ.Service.note(p.offInfo) + ' · ' + ZJ.Service.resume(p.offInfo) : '已过运营时段';
+    return '<article class="trip-card' + (p.off ? ' off' : '') + '" data-act="trip-open" data-i="' + i + '">' +
+      '<div class="trip-h"><span class="trip-no">方案 ' + (n + 1) + '</span>' +
+      '<span class="plan-tag">' + (p.transfers === 0 ? '直达' : p.transfers + ' 次换乘') + '</span>' + tags +
+      '<span class="trip-dur' + (p.off ? ' off' : '') + '">' +
+      (p.off ? (p.closed ? '已收班' : '首班未发') : p.total + '<em>分钟</em>') + '</span></div>' +
+      '<div class="trip-chain">' + chain(p) + '</div>' +
+      '<div class="trip-meta">' +
+      '<span>' + (p.off ? ZJ.esc(offNote) : walk + ' · ' + meters) + '</span>' +
+      (p.off ? '' : '<span class="trip-veh ' + v.cls + '">' + ZJ.esc(v.txt) + '</span>') +
+      '<svg class="ico trip-go"><use href="#i-right"/></svg></div>' +
+      '</article>';
   }
 
   function renderPlans() {
@@ -294,79 +154,67 @@
         '<b>暂无可用方案</b>「' + ZJ.esc(G.from) + '」到「' + ZJ.esc(G.to) + '」没有直达或换乘线路<br>可以换一个邻近站点试试</div>';
       return;
     }
-    /* 每次渲染都重算运营状态：跨过末班时间会自动切换为「已收班」 */
-    G.plans.forEach(annotate);
+    G.plans.forEach(ZJ.Planner.annotate);
     G.sig = G.plans.map((p) => p.svcs.map((s) => s.state).join(',')).join('|');
 
-    /* 收班过滤：还有可用方案时不再展示已收班的；全部收班时全部保留并标为「明日参考」 */
     const avail = G.plans.filter((p) => !p.off);
     G.allClosed = avail.length === 0;
     const shown = avail.length ? avail : G.plans;
-    if (G.idx < 0 || !shown.some((p) => p === G.plans[G.idx])) G.idx = G.plans.indexOf(shown[0]);
-    G.visible = shown.length;
-
-    const idxOf = (p) => G.plans.indexOf(p);
-    const tabs = shown.map((p) =>
-      '<button class="plan-tab ' + (idxOf(p) === G.idx ? 'on' : '') + (p.off ? ' off' : '') + '" data-act="plan-idx" data-i="' + idxOf(p) + '">' +
-      '<b>' + (p.transfers === 0 ? '直达' : p.transfers + ' 次换乘') + '</b>' +
-      '<span>' + p.legs.map((l) => l.line).join(' › ') + ' · ' + (p.off ? '已收班' : p.total + ' 分钟') + '</span></button>').join('');
+    G.idx = Math.max(0, G.plans.indexOf(shown[0]));
+    G.visible = shown;
 
     const banner = G.allClosed
       ? '<div class="degrade-banner soft"><svg class="ico"><use href="#i-clock"/></svg>' +
-        '<div><b>今日末班已过</b><span>以下为明日可乘方案，末班车发出后不再显示剩余站数</span></div></div>'
-      : '';
+        '<div><b>今日末班已过</b><span>以下方案为明日参考，收班后不再显示剩余站数与到达时间</span></div></div>'
+      : (ZJ.Api.mode === 'static'
+        ? '<div class="degrade-banner soft"><svg class="ico"><use href="#i-refresh"/></svg>' +
+          '<div><b>静态数据模式</b><span>已关闭到站预估，仅显示站点、首末班与时刻表</span></div></div>'
+        : '');
 
-    const list = shown.map((p, n) => planCard(p, idxOf(p), n)).join('');
-    $('planResult').innerHTML = banner + renderWalk(G.walk) +
-      '<div class="plan-tabs">' + tabs + '</div>' +
-      '<div class="plan-list">' + list + '</div>';
-    const p = G.plans[G.idx];
-    if (p && !p.off) mountStrips(p);
+    $('planResult').innerHTML = banner + renderWalk(G.walk) + '<div class="trip-list">' +
+      shown.map((p, n) => tripCard(p, G.plans.indexOf(p), n)).join('') + '</div>';
+
+    const hint = ZJ.DataSync ? ZJ.DataSync.status() : null;
+    const dh = $('goDataHint');
+    if (dh) {
+      const stale = hint && (hint.state === 'stale' || hint.state === 'offline');
+      dh.hidden = !stale;
+      dh.textContent = stale ? ZJ.DataSync.hint() : '';
+    }
   }
 
-  function plan() {
-    if (!G.from) { ZJ.toast('请先选择起点站'); return; }
-    if (!G.to) { ZJ.toast('请先选择终点站'); return; }
-    /* 同站：清掉上一次结果，避免显示与当前起终点对不上的方案 */
+  /* ---------- 计算 ---------- */
+  function plan(opts) {
+    opts = opts || {};
+    if (!G.from) { if (!opts.silent) ZJ.toast('请先选择起点站'); return; }
+    if (!G.to) { if (!opts.silent) ZJ.toast('请先选择终点站'); return; }
     if (G.from === G.to) {
       G.plans = []; G.idx = 0; G.computing = false;
       renderTip('起点和终点不能是同一个站，请换一个');
-      ZJ.toast('起点和终点不能是同一个站');
+      if (!opts.silent) ZJ.toast('起点和终点不能是同一个站');
       return;
     }
     if (G.computing) return;
     G.tip = '';
-    pushHistory(G.from, G.to);
-    renderHistory();
+    if (!opts.noHistory) { pushHistory(G.from, G.to); renderHistory(); }
     G.computing = true;
-    $('planResult').innerHTML = '<div class="plan-empty"><b>正在计算出行方案…</b>直达优先，其次比较换乘次数</div>';
+    G.live = new Map();
+    if (!opts.silent) {
+      $('planResult').innerHTML = '<div class="plan-empty"><b>正在计算出行方案…</b>直达优先，其次比较换乘次数</div>';
+    }
     setTimeout(() => {
-      /* 直达优先：有直达时同时给出若干换乘备选，便于按耗时 / 少走路自行挑 */
-      const direct = findDirect(G.from, G.to);
-      let plans = direct;
-      if (direct.length < 3) {
-        const reach = endReach(G.to);
-        const alt = findTransfer(G.from, G.to, reach);
-        plans = dedupe(direct.concat(alt), 6);
-        if (!plans.length) plans = findTwoTransfer(G.from, G.to, reach);
-      }
-      plans = plans.map(annotate);
-
-      /* 收班过滤：优先只留下仍在运营的方案；全部收班时全部保留并标注「明日」 */
-      const avail = plans.filter((p) => !p.off);
-      G.allClosed = plans.length > 0 && avail.length === 0;
-      const picked = avail.length ? avail : plans;
-      picked.sort((a, b) => (a.off ? 1 : 0) - (b.off ? 1 : 0) || a.transfers - b.transfers || a.total - b.total);
-
-      G.plans = picked;
-      G.idx = 0;
-      G.walk = walkInfo(G.from, G.to);
+      const res = ZJ.Planner.search(G.from, G.to, G.prefs || 'fast');
+      G.plans = res.plans;
+      G.walk = res.walk;
+      G.allClosed = res.allClosed;
       G.computing = false;
       renderPlans();
-      const closedCount = picked.filter((p) => p.off).length;
-      if (!picked.length) ZJ.toast('暂无可行方案');
+      startLive();
+      loadLive();
+      if (opts.silent) return;
+      if (!G.plans.length) ZJ.toast('暂无可行方案');
       else if (G.allClosed) ZJ.toast('今日末班已过，已列出明日方案');
-      else ZJ.toast('找到 ' + picked.length + ' 套方案' + (closedCount ? '（' + closedCount + ' 套已收班）' : ''));
+      else ZJ.toast('找到 ' + G.plans.length + ' 套方案');
     }, 40);
   }
 
@@ -396,20 +244,36 @@
     },
     plan: plan,
     state() { return G; },
-    /* 供定时器调用：运营状态变化时才重绘，避免打断正在浏览的卡片 */
+    /* 详情页改上下车点后，列表页同步新的起终点 */
+    setEndpoints(from, to, opts) {
+      G.from = from; G.to = to;
+      renderSelectors();
+      plan(Object.assign({ silent: true }, opts || {}));
+    },
+    /* 详情页就地改站后，列表里的同一套方案同步为新方案 */
+    replacePlan(origin, next) {
+      if (!next) return;
+      const i = G.plans.indexOf(origin);
+      if (i > -1) G.plans[i] = next;
+      else if (G.plans[G.idx]) G.plans[G.idx] = next;
+      renderPlans();
+    },
+    /* 数据版本更新后：重新规划，保证方案与新的首末班 / 站序一致 */
+    afterData() {
+      G.live = new Map();
+      if (G.from && G.to) plan({ silent: true, noHistory: true });
+    },
     tick() {
       if (!G.plans.length) return;
       if (!document.getElementById('page-go').classList.contains('on')) return;
       const sig = G.plans.map((p) => p.legs.map((l) => ZJ.Service.info(l.dir, l.fromOrder).state).join(',')).join('|');
-      const allClosed = G.plans.every((p) => p.legs.every((l) => ZJ.Service.info(l.dir, l.fromOrder).state === 'closed'));
-      if (sig === G.sig && allClosed === G.allClosed) return;
+      if (sig === G.sig) return;
       G.sig = sig;
       renderPlans();
     }
   };
   ZJ.Go = Go;
 
-  /* 每 30 秒检查一次运营状态：跨过末班时间会自动切换为「已收班」，无需用户操作 */
   setInterval(() => { try { Go.tick(); } catch (e) {} }, 30000);
 
   /* ---------- 动作 ---------- */
@@ -441,20 +305,9 @@
     ZJ.toast('起点已设为「' + G.from + '」');
     if (G.to) plan();
   });
-  ZJ.act('plan-idx', (el, e) => { if (e) e.stopPropagation(); G.idx = +el.dataset.i; renderPlans(); });
-  /* 点任意方案卡即切换查看（已展开的卡片再点不动作，避免误触） */
-  ZJ.act('plan-pick', (el) => {
-    const i = +el.dataset.i;
-    if (i === G.idx) return;
-    G.idx = i;
-    renderPlans();
-  });
-  ZJ.act('plan-open', (el, e) => {
-    if (e && e.target.closest('.plan-tab')) return;
-    const i = el && el.dataset && el.dataset.i != null ? +el.dataset.i : G.idx;
-    const p = G.plans[i] || G.plans[G.idx] || G.plans[0];
-    if (!p) { ZJ.toast('请先生成出行方案'); return; }
-    if (!ZJ.Plan || !ZJ.Plan.open) { ZJ.toast('方案详情暂不可用'); return; }
+  ZJ.act('trip-open', (el) => {
+    const p = G.plans[+el.dataset.i];
+    if (!p) { ZJ.toast('方案信息不完整'); return; }
     ZJ.Plan.open(p, G.from, G.to);
   });
   ZJ.act('hist-open', (el) => {

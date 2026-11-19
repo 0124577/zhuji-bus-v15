@@ -76,6 +76,8 @@
     get mode() { return mode; },
     /* 实时接口是否已降级（连续 2 次请求失败） */
     get degraded() { return health.degraded; },
+    /* 实时预估能力整体不可用：只展示时刻表，不再给「还有几站 / 几分钟」 */
+    get liveOff() { return mode === 'static' || health.degraded; },
     get health() { return { fails: health.fails, lastError: health.lastError, degraded: health.degraded, lastOk: health.lastOk }; },
     resetHealth() { health.fails = 0; health.degraded = false; health.lastError = ''; },
     setMode(m) {
@@ -91,14 +93,21 @@
       cache.set(dirId, data);
       return data;
     },
-    /* 全天发车时刻表 */
+    /* 全天发车时刻表
+       该接口部分线路会返回 500，属于单条线路缺时刻表，不应影响实时车辆能力：
+       所以这里不走健康度统计，失败只记录本条线路为空。 */
     async plan(dirId) {
       if (mode === 'static') return null;
       if (planCache.has(dirId)) return planCache.get(dirId);
-      const data = await postRetry('/gzcx-busServer/client/busLine/getBusLinePlanSimpleTime', { lineId: dirId });
-      const list = Array.isArray(data) ? data : [];
-      planCache.set(dirId, list);
-      return list;
+      try {
+        const data = await post('/gzcx-busServer/client/busLine/getBusLinePlanSimpleTime', { lineId: dirId });
+        const list = Array.isArray(data) ? data : [];
+        planCache.set(dirId, list);
+        return list;
+      } catch (e) {
+        planCache.set(dirId, []);
+        throw e;
+      }
     },
     /* 线路实时车辆 */
     async vehicles(dirId) {
